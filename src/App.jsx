@@ -72,12 +72,16 @@ export default function App() {
   }, [dropdownOpen]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('mtg_cards', JSON.stringify(loadedCards));
-      if (activeIndex !== null) localStorage.setItem('mtg_active', String(activeIndex));
-    } catch {}
-    setSavedIndicator(true);
-    const t = setTimeout(() => setSavedIndicator(false), 1500);
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem('mtg_cards', JSON.stringify(loadedCards));
+        if (activeIndex !== null) localStorage.setItem('mtg_active', String(activeIndex));
+        setSavedIndicator(true);
+        setTimeout(() => setSavedIndicator(false), 1500);
+      } catch (e) {
+        if (e.name === 'QuotaExceededError') console.warn('localStorage full — art may not be saved');
+      }
+    }, 600);
     return () => clearTimeout(t);
   }, [loadedCards, activeIndex]);
 
@@ -272,13 +276,26 @@ export default function App() {
   // ── Art assignment ──────────────────────────────────────────────────────────
   const applyArt = useCallback((file) => {
     if (!file || activeIndex === null) return;
-    const url = URL.createObjectURL(file);
-    setLoadedCards(prev => {
-      const next = [...prev];
-      if (next[activeIndex].artImageUrl) URL.revokeObjectURL(next[activeIndex].artImageUrl);
-      next[activeIndex] = { ...next[activeIndex], artImageUrl: url, artTransform: DEFAULT_TRANSFORM() };
-      return next;
-    });
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 1200;
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width  = Math.round(img.width  * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        setLoadedCards(prev => {
+          const next = [...prev];
+          next[activeIndex] = { ...next[activeIndex], artImageUrl: dataUrl, artTransform: DEFAULT_TRANSFORM() };
+          return next;
+        });
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
   }, [activeIndex]);
 
   const updateTransform = useCallback((updater) => {
@@ -357,7 +374,6 @@ export default function App() {
   const removeCard = (i) => {
     setLoadedCards(prev => {
       const next = [...prev];
-      if (next[i].artImageUrl) URL.revokeObjectURL(next[i].artImageUrl);
       next.splice(i, 1);
       return next;
     });
@@ -528,7 +544,6 @@ export default function App() {
                       <button className="btn btn-danger" onClick={() => {
                         setLoadedCards(prev => {
                           const next = [...prev];
-                          URL.revokeObjectURL(next[activeIndex].artImageUrl);
                           next[activeIndex] = { ...next[activeIndex], artImageUrl: null, artTransform: DEFAULT_TRANSFORM() };
                           return next;
                         });
