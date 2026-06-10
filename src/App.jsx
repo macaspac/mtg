@@ -19,9 +19,9 @@ async function fetchCard(name) {
 }
 
 const EXPORT_MODES = [
-  { id: 'digital-all', label: 'Export all as PNGs' },
-  { id: 'print',       label: 'Export all as print sheets (bleed marks, 3×3 per page)' },
   { id: 'digital-one', label: 'Export current card as PNG' },
+  { id: 'digital-all', label: 'Export all cards as ZIP' },
+  { id: 'print',       label: 'Export all as print sheets (bleed marks, 3×3 per page)' },
 ];
 
 function parseArchidektId(input) {
@@ -33,14 +33,24 @@ function parseArchidektId(input) {
 
 export default function App() {
   const [searchQuery, setSearchQuery]     = useState('');
-  const [loadedCards, setLoadedCards]     = useState([]);
-  const [activeIndex, setActiveIndex]     = useState(null);
+  const [loadedCards, setLoadedCards]     = useState(() => {
+    try { return JSON.parse(localStorage.getItem('mtg_cards') || '[]'); } catch { return []; }
+  });
+  const [activeIndex, setActiveIndex]     = useState(() => {
+    try {
+      const saved = localStorage.getItem('mtg_active');
+      const cards = JSON.parse(localStorage.getItem('mtg_cards') || '[]');
+      const idx = saved !== null ? Number(saved) : null;
+      return idx !== null && idx < cards.length ? idx : (cards.length > 0 ? 0 : null);
+    } catch { return null; }
+  });
+  const [savedIndicator, setSavedIndicator] = useState(false);
   const [loading, setLoading]             = useState(false);
   const [error, setError]                 = useState('');
   const [dragging, setDragging]           = useState(false);
   const [exporting, setExporting]           = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
-  const [exportMode, setExportMode]         = useState('digital-all');
+  const [exportMode, setExportMode]         = useState('digital-one');
   const [dropdownOpen, setDropdownOpen]     = useState(false);
   const [archidektInput, setArchidektInput] = useState('');
   const [importing, setImporting]         = useState(false);
@@ -60,6 +70,16 @@ export default function App() {
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [dropdownOpen]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mtg_cards', JSON.stringify(loadedCards));
+      if (activeIndex !== null) localStorage.setItem('mtg_active', String(activeIndex));
+    } catch {}
+    setSavedIndicator(true);
+    const t = setTimeout(() => setSavedIndicator(false), 1500);
+    return () => clearTimeout(t);
+  }, [loadedCards, activeIndex]);
 
   const panStart   = useRef(null);
   const touchStart = useRef(null);
@@ -383,7 +403,10 @@ export default function App() {
       <header className="app-header">
         <span style={{ fontSize: 22 }}>🃏</span>
         <h1>MTG Card Builder</h1>
-        <span className="subtitle">{loadedCards.length} card{loadedCards.length !== 1 ? 's' : ''} loaded · {loadedCards.filter(c => c.artImageUrl).length} with art</span>
+        <span className="subtitle">
+          {loadedCards.length} card{loadedCards.length !== 1 ? 's' : ''} loaded · {loadedCards.filter(c => c.artImageUrl).length} with art
+          {savedIndicator && <span className="saved-indicator"> · Saved</span>}
+        </span>
         <div className="header-export">
           <div className="export-split-btn" ref={dropdownRef}>
             <button

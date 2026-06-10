@@ -1,3 +1,4 @@
+import JSZip from 'jszip';
 import { renderCard, renderCardWithBleed, CARD_W, CARD_H, BLEED } from './cardRenderer.js';
 
 export async function exportSingleCard(cardData, artImageUrl, artTransform, withBleed = false) {
@@ -58,10 +59,21 @@ export async function exportPrintSheet(cards, onProgress) {
 }
 
 export async function exportAllDigital(cards, onProgress) {
+  const zip = new JSZip();
   for (let i = 0; i < cards.length; i++) {
     const { cardData, artImageUrl, artTransform } = cards[i];
-    await exportSingleCard(cardData, artImageUrl, artTransform, false);
-    await new Promise(r => setTimeout(r, 100));
+    const canvas = document.createElement('canvas');
+    await renderCard(canvas, cardData, artImageUrl, artTransform);
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+    const filename = `${cardData.name.replace(/[^a-zA-Z0-9]/g, '_')}.png`;
+    zip.file(filename, blob);
     if (onProgress) onProgress(i + 1, cards.length);
   }
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(zipBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'cards.zip';
+  a.click();
+  URL.revokeObjectURL(url);
 }
