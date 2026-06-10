@@ -94,7 +94,7 @@ export default function App() {
 
   useEffect(() => {
     if (!canvasRef.current || !activeCard) return;
-    renderCard(canvasRef.current, activeCard.cardData, activeCard.artImageUrl, activeCard.artTransform);
+    renderCard(canvasRef.current, activeCard.cardData, activeCard.artImageUrl, activeCard.artTransform, activeCard.setSymbolUrl ?? null);
   }, [activeCard]);
 
   // ── Single card search ──────────────────────────────────────────────────────
@@ -273,6 +273,22 @@ export default function App() {
     }
   };
 
+  // ── Set symbol assignment ───────────────────────────────────────────────────
+  const symbolInputRef = useRef(null);
+  const applySetSymbol = useCallback((file) => {
+    if (!file || activeIndex === null) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target.result;
+      setLoadedCards(prev => {
+        const next = [...prev];
+        next[activeIndex] = { ...next[activeIndex], setSymbolUrl: dataUrl };
+        return next;
+      });
+    };
+    reader.readAsDataURL(file);
+  }, [activeIndex]);
+
   // ── Art assignment ──────────────────────────────────────────────────────────
   const applyArt = useCallback((file) => {
     if (!file || activeIndex === null) return;
@@ -397,7 +413,7 @@ export default function App() {
       } else if (exportMode === 'digital-all') {
         await exportAllDigital(loadedCards, progress);
       } else if (exportMode === 'digital-one' && activeCard) {
-        await exportSingleCard(activeCard.cardData, activeCard.artImageUrl, activeCard.artTransform, false);
+        await exportSingleCard(activeCard.cardData, activeCard.artImageUrl, activeCard.artTransform, false, activeCard.setSymbolUrl ?? null);
       }
     } finally {
       setExporting(false);
@@ -556,7 +572,59 @@ export default function App() {
           </div>
 
           <div className="sidebar-section">
+            <h2>Set Symbol</h2>
+            {activeIndex === null ? (
+              <p style={{ fontSize: 13, color: '#475569' }}>Load a card first</p>
+            ) : (
+              <>
+                <input
+                  ref={symbolInputRef}
+                  type="file"
+                  accept="image/*,.svg"
+                  style={{ display: 'none' }}
+                  onChange={e => { applySetSymbol(e.target.files[0]); e.target.value = ''; }}
+                />
+                {activeCard?.setSymbolUrl ? (
+                  <div className="art-preview">
+                    <img src={activeCard.setSymbolUrl} alt="set symbol preview" style={{ background: '#1e293b', padding: 6, borderRadius: 4 }} />
+                    <div className="art-preview-actions">
+                      <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => symbolInputRef.current?.click()}>Replace</button>
+                      <button className="btn btn-danger" onClick={() => {
+                        setLoadedCards(prev => {
+                          const next = [...prev];
+                          next[activeIndex] = { ...next[activeIndex], setSymbolUrl: null };
+                          return next;
+                        });
+                      }}>Clear</button>
+                    </div>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ width: '100%', marginTop: 6 }}
+                      onClick={() => {
+                        const sym = activeCard.setSymbolUrl;
+                        setLoadedCards(prev => prev.map(c => ({ ...c, setSymbolUrl: sym })));
+                      }}
+                    >Apply to all cards</button>
+                  </div>
+                ) : (
+                  <button className="btn btn-secondary" style={{ width: '100%' }} onClick={() => symbolInputRef.current?.click()}>
+                    Upload symbol image
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="sidebar-section sidebar-section-row">
             <h2>Cards ({loadedCards.length})</h2>
+            {loadedCards.length > 0 && (
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => { setLoadedCards([]); setActiveIndex(null); }}
+              >
+                Remove All
+              </button>
+            )}
           </div>
           <div className="card-list">
             {loadedCards.length === 0 && (

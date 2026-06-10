@@ -128,6 +128,21 @@
   border-bottom: 1px solid #1e293b;
 }
 
+.sidebar-section-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sidebar-section-row h2 {
+  margin-bottom: 0;
+}
+
+.btn-sm {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
 .sidebar-section h2 {
   font-size: 11px;
   font-weight: 600;
