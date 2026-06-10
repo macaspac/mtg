@@ -46,9 +46,13 @@ export default function App() {
   const [importing, setImporting]         = useState(false);
   const [importError, setImportError]     = useState('');
   const [importProgress, setImportProgress] = useState('');
+  const [textImporting, setTextImporting]   = useState(false);
+  const [textImportError, setTextImportError] = useState('');
+  const [textImportProgress, setTextImportProgress] = useState('');
   const [isPanning, setIsPanning]         = useState(false);
 
   const dropdownRef = useRef(null);
+  const textFileInputRef = useRef(null);
 
   useEffect(() => {
     if (!dropdownOpen) return;
@@ -166,6 +170,82 @@ export default function App() {
       setImportError(e.message);
     } finally {
       setImporting(false);
+    }
+  };
+
+  // ── Text file import ────────────────────────────────────────────────────────
+  function parseTextDeck(text) {
+    const names = [];
+    const seen = new Set();
+    for (const raw of text.split('\n')) {
+      const line = raw.trim();
+      if (!line) continue;
+      // skip lines tagged {noDeck} (tokens, extras)
+      if (line.includes('{noDeck}')) continue;
+      // format: Nx Card Name (set) num [Category]
+      const m = line.match(/^\d+x (.+?) \([^)]+\) \S+/);
+      if (!m) continue;
+      const name = m[1].trim();
+      if (!seen.has(name)) { seen.add(name); names.push(name); }
+    }
+    return names;
+  }
+
+  const handleTextFileImport = async (file) => {
+    if (!file) return;
+    setTextImporting(true);
+    setTextImportError('');
+    setTextImportProgress('Reading file…');
+    try {
+      const text = await file.text();
+      const names = parseTextDeck(text);
+      if (!names.length) throw new Error('No valid card names found in file');
+
+      const BASIC_LANDS = new Set(['Plains', 'Island', 'Swamp', 'Mountain', 'Forest', 'Wastes']);
+      const alreadyLoaded = new Set(loadedCards.map(c => c.cardData.name));
+      const toFetch = names.filter(n => !BASIC_LANDS.has(n) && !alreadyLoaded.has(n));
+
+      if (!toFetch.length) {
+        setTextImportProgress('All cards already loaded.');
+        setTextImporting(false);
+        setTimeout(() => setTextImportProgress(''), 3000);
+        return;
+      }
+
+      const newCards = [];
+      const BATCH = 75;
+      for (let i = 0; i < toFetch.length; i += BATCH) {
+        const batch = toFetch.slice(i, i + BATCH);
+        setTextImportProgress(`Fetching cards ${i + 1}–${Math.min(i + BATCH, toFetch.length)} of ${toFetch.length}…`);
+        const identifiers = batch.map(name => ({ name }));
+        const sfRes = await fetch('https://api.scryfall.com/cards/collection', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifiers }),
+        });
+        const sfData = await sfRes.json();
+        for (const card of (sfData.data ?? [])) {
+          const imageUris = card.image_uris ?? card.card_faces?.[0]?.image_uris;
+          if (imageUris) {
+            newCards.push({
+              cardData: { ...card, image_uris: imageUris },
+              artImageUrl: null,
+              artTransform: DEFAULT_TRANSFORM(),
+            });
+          }
+        }
+        if (i + BATCH < toFetch.length) await new Promise(r => setTimeout(r, 100));
+      }
+
+      setLoadedCards(prev => [...prev, ...newCards]);
+      setActiveIndex(prev => prev ?? (newCards.length > 0 ? loadedCards.length : null));
+      setTextImportProgress(`Imported ${newCards.length} card${newCards.length !== 1 ? 's' : ''}.`);
+      setTimeout(() => setTextImportProgress(''), 3000);
+    } catch (e) {
+      setTextImportError(e.message);
+    } finally {
+      setTextImporting(false);
+      if (textFileInputRef.current) textFileInputRef.current.value = '';
     }
   };
 
@@ -373,6 +453,31 @@ export default function App() {
             </div>
             {importError    && <div className="error-msg">{importError}</div>}
             {importProgress && <div className="loading-msg"><span className={importing ? 'spinner' : ''} />{importProgress}</div>}
+          </div>
+
+          <div className="sidebar-section">
+            <h2>Import from Text File</h2>
+            <p style={{ fontSize: 13, color: '#475569', marginBottom: 8 }}>
+              Upload a deck list in the format:<br />
+              <code style={{ fontSize: 11 }}>1x Card Name (set) num [Category]</code>
+            </p>
+            <input
+              ref={textFileInputRef}
+              type="file"
+              accept=".txt,text/plain"
+              style={{ display: 'none' }}
+              onChange={e => handleTextFileImport(e.target.files[0])}
+            />
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%' }}
+              onClick={() => textFileInputRef.current?.click()}
+              disabled={textImporting}
+            >
+              {textImporting ? <><span className="spinner" /> Importing…</> : 'Choose .txt file'}
+            </button>
+            {textImportError    && <div className="error-msg">{textImportError}</div>}
+            {textImportProgress && <div className="loading-msg"><span className={textImporting ? 'spinner' : ''} />{textImportProgress}</div>}
           </div>
 
           <div className="sidebar-section">
