@@ -19,9 +19,9 @@ async function fetchCard(name) {
 }
 
 const EXPORT_MODES = [
-  { id: 'digital-all', label: 'Export all as PNGs' },
-  { id: 'print',       label: 'Export all as print sheets (bleed marks, 3×3 per page)' },
   { id: 'digital-one', label: 'Export current card as PNG' },
+  { id: 'digital-all', label: 'Export all cards as ZIP' },
+  { id: 'print',       label: 'Export all as print sheets (bleed marks, 3×3 per page)' },
 ];
 
 function parseArchidektId(input) {
@@ -40,7 +40,7 @@ export default function App() {
   const [dragging, setDragging]           = useState(false);
   const [exporting, setExporting]           = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
-  const [exportMode, setExportMode]         = useState('digital-all');
+  const [exportMode, setExportMode]         = useState('digital-one');
   const [dropdownOpen, setDropdownOpen]     = useState(false);
   const [archidektInput, setArchidektInput] = useState('');
   const [importing, setImporting]         = useState(false);
