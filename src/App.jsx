@@ -6,7 +6,7 @@ import { exportSingleCard, exportPrintSheet, exportAllDigital } from './exportUt
 const SCRYFALL_SEARCH = 'https://api.scryfall.com/cards/named?fuzzy=';
 const ARCHIDEKT_BASE = import.meta.env.DEV
   ? '/archidekt-api'
-  : 'https://archidekt.com/api';
+  : 'https://corsproxy.io/?url=https://archidekt.com/api';
 const DEFAULT_TRANSFORM = () => ({ x: 0, y: 0, scale: 1 });
 
 const DISPLAY_W = 375;
