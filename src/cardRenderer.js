@@ -19,6 +19,7 @@ const TZ = {
 const SET_SYMBOL = { cx: 660, cy: 616, size: 46 };
 
 let fontsReady = false;
+const imageCache = new Map();
 
 async function ensureFontsLoaded() {
   if (fontsReady) return;
@@ -37,10 +38,11 @@ async function ensureFontsLoaded() {
 }
 
 function loadImage(src) {
+  if (imageCache.has(src)) return Promise.resolve(imageCache.get(src));
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload  = () => resolve(img);
+    img.onload  = () => { imageCache.set(src, img); resolve(img); };
     img.onerror = reject;
     img.src = src;
   });

@@ -116,6 +116,12 @@
   transition: opacity 0.3s;
 }
 
+.storage-warning {
+  color: #b45309;
+  font-weight: 500;
+  cursor: help;
+}
+
 .app-body {
   display: flex;
   flex: 1;
