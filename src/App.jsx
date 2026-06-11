@@ -93,6 +93,7 @@ export default function App() {
     } catch { return null; }
   });
   const [savedIndicator, setSavedIndicator] = useState(false);
+  const [storageWarning, setStorageWarning] = useState(false);
   const [loading, setLoading]             = useState(false);
   const [error, setError]                 = useState('');
   const [dragging, setDragging]           = useState(false);
@@ -128,7 +129,7 @@ export default function App() {
         setSavedIndicator(true);
         setTimeout(() => setSavedIndicator(false), 1500);
       } catch (e) {
-        if (e.name === 'QuotaExceededError') console.warn('localStorage full');
+        if (e.name === 'QuotaExceededError') setStorageWarning(true);
       }
     }, 600);
     return () => clearTimeout(t);
@@ -137,6 +138,7 @@ export default function App() {
   const panStart   = useRef(null);
   const touchStart = useRef(null);
   const canvasRef  = useRef(null);
+  const rafRef     = useRef(null);
   const fileInputRef = useRef(null);
   const symbolInputRef = useRef(null);
 
@@ -144,15 +146,20 @@ export default function App() {
 
   useEffect(() => {
     if (!canvasRef.current || !activeCard) return;
-    renderCard(
-      canvasRef.current,
-      activeCard.cardData,
-      activeCard.artImageUrl,
-      activeCard.artTransform,
-      activeCard.setSymbolUrl ?? null,
-      activeCard.customText ?? null,
-      getTemplateUrl(activeCard.templateId),
-    );
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      renderCard(
+        canvasRef.current,
+        activeCard.cardData,
+        activeCard.artImageUrl,
+        activeCard.artTransform,
+        activeCard.setSymbolUrl ?? null,
+        activeCard.customText ?? null,
+        getTemplateUrl(activeCard.templateId),
+      );
+    });
+    return () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; } };
   }, [activeCard]);
 
   // ── Single card search ──────────────────────────────────────────────────────
@@ -483,6 +490,7 @@ export default function App() {
         <span className="subtitle">
           {loadedCards.length} card{loadedCards.length !== 1 ? 's' : ''} loaded · {loadedCards.filter(c => c.artImageUrl).length} with art
           {savedIndicator && <span className="saved-indicator"> · Saved</span>}
+          {storageWarning && <span className="storage-warning" title="Art images may not be saved. Too many cards with art can exceed browser storage limits."> · ⚠ Storage full — art may not persist</span>}
         </span>
         <div className="header-export">
           <div className="export-split-btn" ref={dropdownRef}>
@@ -592,7 +600,7 @@ export default function App() {
             )}
             {loadedCards.map((c, i) => (
               <div
-                key={c.cardData.id + i}
+                key={c.cardData.id}
                 className={`card-list-item ${i === activeIndex ? 'active' : ''}`}
                 onClick={() => setActiveIndex(i)}
               >
