@@ -1,6 +1,6 @@
 // Card renderer — composites template/Scryfall base + user art + text overlay
 // Card canvas: 745 × 1040px   Art box (transparent in template): x=30, y=124, w=685, h=427
-import { parseManaTokens, drawManaCost, drawKeyruneSymbol, rarityColor } from './manaSymbols.js';
+import { parseManaTokens, drawManaCost, drawKeyruneSymbol, rarityColor, drawManaSymbolInline } from './manaSymbols.js';
 
 export const CARD_W = 745;
 export const CARD_H = 1040;
@@ -73,37 +73,112 @@ function mplantinFont(size, italic = false) {
   return `${italic ? 'italic ' : ''}${size}px 'PlantinMTProRg', 'Palatino Linotype', Georgia, serif`;
 }
 
+// Tokenize text containing {SYMBOL} mana tags into segments for rendering.
+function tokenizeOracleText(text) {
+  const parts = [];
+  const re = /\{([^}]+)\}/g;
+  let last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push({ type: 'text', value: text.slice(last, m.index) });
+    parts.push({ type: 'symbol', value: m[1].toUpperCase() });
+    last = re.lastIndex;
+  }
+  if (last < text.length) parts.push({ type: 'text', value: text.slice(last) });
+  return parts;
+}
+
+// Measure width of a word (which may contain symbol tokens) given current ctx font.
+function measureWord(ctx, word, symSize) {
+  const parts = tokenizeOracleText(word);
+  let w = 0;
+  for (const p of parts) {
+    w += p.type === 'symbol' ? symSize : ctx.measureText(p.value).width;
+  }
+  return w;
+}
+
+// Render a line of mixed text/symbols starting at (lx, cy).
+function renderLine(ctx, segments, lx, cy, symSize, symR) {
+  let px = lx;
+  let prevWasSymbol = false;
+  for (const seg of segments) {
+    if (seg.type === 'text') {
+      ctx.fillText(seg.value, px, cy);
+      px += ctx.measureText(seg.value).width;
+      prevWasSymbol = false;
+    } else {
+      if (prevWasSymbol) px += 1;
+      drawManaSymbolInline(ctx, seg.value, px + symR, cy - symR * 0.15 - 7, symR);
+      px += symSize;
+      prevWasSymbol = true;
+    }
+  }
+}
+
+// Build line segments from words, each word pre-tokenized.
+function buildLineSegments(wordTokens) {
+  const segs = [];
+  for (let i = 0; i < wordTokens.length; i++) {
+    if (i > 0) segs.push({ type: 'text', value: ' ' });
+    for (const part of wordTokens[i]) segs.push(part);
+  }
+  return segs;
+}
+
+function lineWidth(ctx, wordTokens, symSize) {
+  let w = 0;
+  for (let i = 0; i < wordTokens.length; i++) {
+    if (i > 0) w += ctx.measureText(' ').width;
+    for (const p of wordTokens[i]) {
+      w += p.type === 'symbol' ? symSize : ctx.measureText(p.value).width;
+    }
+  }
+  return w;
+}
+
 function wrapText(ctx, text, x, y, maxW, lineH) {
+  const fontSize = parseFloat(ctx.font);
+  const symSize = isNaN(fontSize) ? lineH * 0.72 : fontSize * 0.9;
+  const symR = symSize / 2;
   let cy = y;
   for (const para of text.split('\n')) {
     if (!para.trim()) { cy += lineH * 0.5; continue; }
-    const words = para.split(' ');
-    let line = '';
-    for (const word of words) {
-      const test = line ? `${line} ${word}` : word;
-      if (ctx.measureText(test).width > maxW && line) {
-        ctx.fillText(line, x, cy);
+    const rawWords = para.split(' ');
+    const tokenizedWords = rawWords.map(w => tokenizeOracleText(w));
+    let lineWords = [];
+    for (let i = 0; i < tokenizedWords.length; i++) {
+      const candidate = [...lineWords, tokenizedWords[i]];
+      if (lineWidth(ctx, candidate, symSize) > maxW && lineWords.length > 0) {
+        renderLine(ctx, buildLineSegments(lineWords), x, cy, symSize, symR);
         cy += lineH;
-        line = word;
-      } else line = test;
+        lineWords = [tokenizedWords[i]];
+      } else {
+        lineWords = candidate;
+      }
     }
-    if (line) { ctx.fillText(line, x, cy); cy += lineH; }
+    if (lineWords.length) {
+      renderLine(ctx, buildLineSegments(lineWords), x, cy, symSize, symR);
+      cy += lineH;
+    }
   }
   return cy;
 }
 
 function countLines(ctx, text, maxW) {
+  const fontSize = parseFloat(ctx.font);
+  const symSize = isNaN(fontSize) ? 14 : fontSize * 0.9;
   let n = 0;
   for (const para of text.split('\n')) {
     if (!para.trim()) { n += 0.5; continue; }
-    const words = para.split(' ');
-    let line = '';
-    for (const word of words) {
-      const test = line ? `${line} ${word}` : word;
-      if (ctx.measureText(test).width > maxW && line) { n++; line = word; }
-      else line = test;
+    const rawWords = para.split(' ');
+    const tokenizedWords = rawWords.map(w => tokenizeOracleText(w));
+    let lineWords = [];
+    for (const tw of tokenizedWords) {
+      const candidate = [...lineWords, tw];
+      if (lineWidth(ctx, candidate, symSize) > maxW && lineWords.length > 0) { n++; lineWords = [tw]; }
+      else lineWords = candidate;
     }
-    if (line) n++;
+    if (lineWords.length) n++;
   }
   return n;
 }

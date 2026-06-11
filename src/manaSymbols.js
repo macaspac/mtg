@@ -660,6 +660,24 @@ function _drawHybrid(ctx, tokenA, tokenB, cx, cy, r) {
   ctx.restore();
 }
 
+/** Draw a mana symbol inline (no shadow) centered at (cx, cy) with radius r. */
+export function drawManaSymbolInline(ctx, token, cx, cy, r) {
+  const ch = MANA_CHARS[token];
+  if (!ch) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = _manaBg(token);
+  ctx.fill();
+  const fontSize = r * 1.5;
+  ctx.font = `${fontSize}px 'Mana'`;
+  ctx.fillStyle = _manaGlyphColor(token);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(ch, cx, cy);
+  ctx.restore();
+}
+
 /** Draw a keyrune set symbol centered at (cx, cy). Returns true if drawn. */
 export function drawKeyruneSymbol(ctx, setCode, cx, cy, size, color) {
   const ch = keyruneChar(setCode);
