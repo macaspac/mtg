@@ -723,7 +723,7 @@ export default function App() {
                 />
                 {activeCard?.setSymbolUrl ? (
                   <div className="art-preview">
-                    <img src={activeCard.setSymbolUrl} alt="set symbol preview" style={{ background: '#1e293b', padding: 6, borderRadius: 4 }} />
+                    <img src={activeCard.setSymbolUrl} alt="set symbol preview" />
                     <div className="art-preview-actions">
                       <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => symbolInputRef.current?.click()}>Replace</button>
                       <button className="btn btn-danger" onClick={() => {
