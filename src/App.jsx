@@ -1,7 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
+import 'mana-font/css/mana.css';
+import 'keyrune/css/keyrune.css';
 import { renderCard, CARD_W, CARD_H } from './cardRenderer.js';
 import { exportSingleCard, exportPrintSheet, exportAllDigital } from './exportUtils.js';
+import { getTemplateUrl, getTemplateKey } from './templates.js';
+import { parseManaTokens, manaTokenToClass } from './manaSymbols.js';
 
 const SCRYFALL_SEARCH = 'https://api.scryfall.com/cards/named?fuzzy=';
 const ARCHIDEKT_BASE = import.meta.env.DEV
@@ -31,10 +35,57 @@ function parseArchidektId(input) {
   return null;
 }
 
+
+function initCustomText(card) {
+  return {
+    name:       card.name        || '',
+    manaCost:   card.mana_cost   || '',
+    typeLine:   card.type_line   || '',
+    oracleText: card.oracle_text || card.card_faces?.[0]?.oracle_text || '',
+    flavorText: card.flavor_text || card.card_faces?.[0]?.flavor_text || '',
+    pt: card.power != null
+      ? `${card.power}/${card.toughness}`
+      : (card.loyalty || ''),
+  };
+}
+
+function makeCard(data) {
+  const imageUris = data.image_uris ?? data.card_faces?.[0]?.image_uris;
+  const cardData = { ...data, image_uris: imageUris };
+  return {
+    cardData,
+    customText:   initCustomText(data),
+    artImageUrl:  null,
+    artTransform: DEFAULT_TRANSFORM(),
+    setSymbolUrl: null,
+    templateId:   getTemplateKey(cardData),
+  };
+}
+
 export default function App() {
   const [searchQuery, setSearchQuery]     = useState('');
   const [loadedCards, setLoadedCards]     = useState(() => {
-    try { return JSON.parse(localStorage.getItem('mtg_cards') || '[]'); } catch { return []; }
+    try {
+      const saved = JSON.parse(localStorage.getItem('mtg_cards') || '[]');
+      return saved.map(c => {
+        const defaults = initCustomText(c.cardData);
+        const ct = c.customText ?? {};
+        return {
+          ...c,
+          // Merge saved values with defaults — ?? ensures undefined saved fields fall back
+          customText: {
+            name:       ct.name       ?? defaults.name,
+            manaCost:   ct.manaCost   ?? defaults.manaCost,
+            typeLine:   ct.typeLine   ?? defaults.typeLine,
+            oracleText: ct.oracleText ?? defaults.oracleText,
+            flavorText: ct.flavorText ?? defaults.flavorText,
+            pt:         ct.pt         ?? defaults.pt,
+          },
+          // recompute if old data has a random id that's not a TEMPLATE_MAP key
+          templateId: getTemplateKey(c.cardData),
+        };
+      });
+    } catch { return []; }
   });
   const [activeIndex, setActiveIndex]     = useState(() => {
     try {
@@ -61,7 +112,7 @@ export default function App() {
   const [textImportProgress, setTextImportProgress] = useState('');
   const [isPanning, setIsPanning]         = useState(false);
 
-  const dropdownRef = useRef(null);
+  const dropdownRef    = useRef(null);
   const textFileInputRef = useRef(null);
 
   useEffect(() => {
@@ -71,6 +122,7 @@ export default function App() {
     return () => document.removeEventListener('mousedown', close);
   }, [dropdownOpen]);
 
+  // Persist cards
   useEffect(() => {
     const t = setTimeout(() => {
       try {
@@ -79,7 +131,7 @@ export default function App() {
         setSavedIndicator(true);
         setTimeout(() => setSavedIndicator(false), 1500);
       } catch (e) {
-        if (e.name === 'QuotaExceededError') console.warn('localStorage full — art may not be saved');
+        if (e.name === 'QuotaExceededError') console.warn('localStorage full');
       }
     }, 600);
     return () => clearTimeout(t);
@@ -89,12 +141,21 @@ export default function App() {
   const touchStart = useRef(null);
   const canvasRef  = useRef(null);
   const fileInputRef = useRef(null);
+  const symbolInputRef = useRef(null);
 
   const activeCard = activeIndex !== null ? loadedCards[activeIndex] : null;
 
   useEffect(() => {
     if (!canvasRef.current || !activeCard) return;
-    renderCard(canvasRef.current, activeCard.cardData, activeCard.artImageUrl, activeCard.artTransform);
+    renderCard(
+      canvasRef.current,
+      activeCard.cardData,
+      activeCard.artImageUrl,
+      activeCard.artTransform,
+      activeCard.setSymbolUrl ?? null,
+      activeCard.customText ?? null,
+      getTemplateUrl(activeCard.templateId),
+    );
   }, [activeCard]);
 
   // ── Single card search ──────────────────────────────────────────────────────
@@ -108,7 +169,7 @@ export default function App() {
       if (exists >= 0) {
         setActiveIndex(exists);
       } else {
-        const newCards = [...loadedCards, { cardData: data, artImageUrl: null, artTransform: DEFAULT_TRANSFORM() }];
+        const newCards = [...loadedCards, makeCard(data)];
         setLoadedCards(newCards);
         setActiveIndex(newCards.length - 1);
       }
@@ -126,24 +187,20 @@ export default function App() {
   const handleArchidektImport = async () => {
     const deckId = parseArchidektId(archidektInput);
     if (!deckId) { setImportError('Paste a full Archidekt deck URL or deck ID'); return; }
-
     setImporting(true);
     setImportError('');
     setImportProgress('Fetching deck…');
-
     try {
       const res = await fetch(`${ARCHIDEKT_BASE}/decks/${deckId}/`);
       if (!res.ok) throw new Error(`Archidekt returned ${res.status}`);
       const deck = await res.json();
-
       const cards = deck.cards ?? [];
       if (!cards.length) throw new Error('No cards found in deck');
 
-      const BASIC_LANDS = new Set(['Plains', 'Island', 'Swamp', 'Mountain', 'Forest', 'Wastes']);
+      const BASIC_LANDS = new Set(['Plains','Island','Swamp','Mountain','Forest','Wastes']);
       const alreadyLoaded = new Set(loadedCards.map(c => c.cardData.name));
       const seenNames = new Set();
       const toFetch = [];
-
       for (const entry of cards) {
         const name = entry.card?.oracleCard?.name ?? entry.card?.displayName;
         const scryfallId = entry.card?.uid;
@@ -151,21 +208,14 @@ export default function App() {
         seenNames.add(name);
         toFetch.push({ scryfallId, name });
       }
-
-      if (!toFetch.length) {
-        setImportProgress('All cards already loaded.');
-        setImporting(false);
-        return;
-      }
+      if (!toFetch.length) { setImportProgress('All cards already loaded.'); setImporting(false); return; }
 
       const newCards = [];
       const BATCH = 75;
       for (let i = 0; i < toFetch.length; i += BATCH) {
         const batch = toFetch.slice(i, i + BATCH);
         setImportProgress(`Fetching cards ${i + 1}–${Math.min(i + BATCH, toFetch.length)} of ${toFetch.length}…`);
-        const identifiers = batch.map(({ scryfallId, name }) =>
-          scryfallId ? { id: scryfallId } : { name }
-        );
+        const identifiers = batch.map(({ scryfallId, name }) => scryfallId ? { id: scryfallId } : { name });
         const sfRes = await fetch('https://api.scryfall.com/cards/collection', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -174,17 +224,10 @@ export default function App() {
         const sfData = await sfRes.json();
         for (const card of (sfData.data ?? [])) {
           const imageUris = card.image_uris ?? card.card_faces?.[0]?.image_uris;
-          if (imageUris) {
-            newCards.push({
-              cardData: { ...card, image_uris: imageUris },
-              artImageUrl: null,
-              artTransform: DEFAULT_TRANSFORM(),
-            });
-          }
+          if (imageUris) newCards.push(makeCard(card));
         }
         if (i + BATCH < toFetch.length) await new Promise(r => setTimeout(r, 100));
       }
-
       setLoadedCards(prev => [...prev, ...newCards]);
       setActiveIndex(prev => prev ?? (newCards.length > 0 ? loadedCards.length : null));
       setImportProgress(`Imported ${newCards.length} card${newCards.length !== 1 ? 's' : ''}.`);
@@ -203,10 +246,7 @@ export default function App() {
     const seen = new Set();
     for (const raw of text.split('\n')) {
       const line = raw.trim();
-      if (!line) continue;
-      // skip lines tagged {noDeck} (tokens, extras)
-      if (line.includes('{noDeck}')) continue;
-      // format: Nx Card Name (set) num [Category]
+      if (!line || line.includes('{noDeck}')) continue;
       const m = line.match(/^\d+x (.+?) \([^)]+\) \S+/);
       if (!m) continue;
       const name = m[1].trim();
@@ -224,43 +264,32 @@ export default function App() {
       const text = await file.text();
       const names = parseTextDeck(text);
       if (!names.length) throw new Error('No valid card names found in file');
-
-      const BASIC_LANDS = new Set(['Plains', 'Island', 'Swamp', 'Mountain', 'Forest', 'Wastes']);
+      const BASIC_LANDS = new Set(['Plains','Island','Swamp','Mountain','Forest','Wastes']);
       const alreadyLoaded = new Set(loadedCards.map(c => c.cardData.name));
       const toFetch = names.filter(n => !BASIC_LANDS.has(n) && !alreadyLoaded.has(n));
-
       if (!toFetch.length) {
         setTextImportProgress('All cards already loaded.');
         setTextImporting(false);
         setTimeout(() => setTextImportProgress(''), 3000);
         return;
       }
-
       const newCards = [];
       const BATCH = 75;
       for (let i = 0; i < toFetch.length; i += BATCH) {
         const batch = toFetch.slice(i, i + BATCH);
         setTextImportProgress(`Fetching cards ${i + 1}–${Math.min(i + BATCH, toFetch.length)} of ${toFetch.length}…`);
-        const identifiers = batch.map(name => ({ name }));
         const sfRes = await fetch('https://api.scryfall.com/cards/collection', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ identifiers }),
+          body: JSON.stringify({ identifiers: batch.map(name => ({ name })) }),
         });
         const sfData = await sfRes.json();
         for (const card of (sfData.data ?? [])) {
           const imageUris = card.image_uris ?? card.card_faces?.[0]?.image_uris;
-          if (imageUris) {
-            newCards.push({
-              cardData: { ...card, image_uris: imageUris },
-              artImageUrl: null,
-              artTransform: DEFAULT_TRANSFORM(),
-            });
-          }
+          if (imageUris) newCards.push(makeCard(card));
         }
         if (i + BATCH < toFetch.length) await new Promise(r => setTimeout(r, 100));
       }
-
       setLoadedCards(prev => [...prev, ...newCards]);
       setActiveIndex(prev => prev ?? (newCards.length > 0 ? loadedCards.length : null));
       setTextImportProgress(`Imported ${newCards.length} card${newCards.length !== 1 ? 's' : ''}.`);
@@ -273,7 +302,46 @@ export default function App() {
     }
   };
 
-  // ── Art assignment ──────────────────────────────────────────────────────────
+  // ── Custom text editing ─────────────────────────────────────────────────────
+  const updateCustomText = useCallback((field, value) => {
+    if (activeIndex === null) return;
+    setLoadedCards(prev => {
+      const next = [...prev];
+      next[activeIndex] = {
+        ...next[activeIndex],
+        customText: { ...next[activeIndex].customText, [field]: value },
+      };
+      return next;
+    });
+  }, [activeIndex]);
+
+  const resetCustomText = useCallback(() => {
+    if (activeIndex === null) return;
+    setLoadedCards(prev => {
+      const next = [...prev];
+      next[activeIndex] = {
+        ...next[activeIndex],
+        customText: initCustomText(next[activeIndex].cardData),
+      };
+      return next;
+    });
+  }, [activeIndex]);
+
+  // ── Set symbol ──────────────────────────────────────────────────────────────
+  const applySetSymbol = useCallback((file) => {
+    if (!file || activeIndex === null) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setLoadedCards(prev => {
+        const next = [...prev];
+        next[activeIndex] = { ...next[activeIndex], setSymbolUrl: e.target.result };
+        return next;
+      });
+    };
+    reader.readAsDataURL(file);
+  }, [activeIndex]);
+
+  // ── Art ─────────────────────────────────────────────────────────────────────
   const applyArt = useCallback((file) => {
     if (!file || activeIndex === null) return;
     const reader = new FileReader();
@@ -397,7 +465,7 @@ export default function App() {
       } else if (exportMode === 'digital-all') {
         await exportAllDigital(loadedCards, progress);
       } else if (exportMode === 'digital-one' && activeCard) {
-        await exportSingleCard(activeCard.cardData, activeCard.artImageUrl, activeCard.artTransform, false);
+        await exportSingleCard(activeCard, false);
       }
     } finally {
       setExporting(false);
@@ -413,6 +481,7 @@ export default function App() {
 
   const hasArt   = !!activeCard?.artImageUrl;
   const curScale = activeCard?.artTransform?.scale ?? 1;
+  const ct       = activeCard?.customText;
 
   return (
     <div className="app">
@@ -453,6 +522,7 @@ export default function App() {
       <div className="app-body">
         <aside className="sidebar">
 
+          {/* ── Add Card ── */}
           <div className="sidebar-section">
             <h2>Add Card</h2>
             <div className="search-row">
@@ -468,14 +538,9 @@ export default function App() {
               </button>
             </div>
             {error && <div className="error-msg">{error}</div>}
-            {activeCard && (
-              <div className="card-info-box">
-                <div className="card-name">{activeCard.cardData.name}</div>
-                <div className="card-meta">{activeCard.cardData.type_line}<br />{activeCard.cardData.mana_cost}</div>
-              </div>
-            )}
           </div>
 
+          {/* ── Import from Archidekt ── */}
           <div className="sidebar-section">
             <h2>Import from Archidekt</h2>
             <div className="search-row">
@@ -494,11 +559,11 @@ export default function App() {
             {importProgress && <div className="loading-msg"><span className={importing ? 'spinner' : ''} />{importProgress}</div>}
           </div>
 
+          {/* ── Import from Text File ── */}
           <div className="sidebar-section">
             <h2>Import from Text File</h2>
             <p style={{ fontSize: 13, color: '#475569', marginBottom: 8 }}>
-              Upload a deck list in the format:<br />
-              <code style={{ fontSize: 11 }}>1x Card Name (set) num [Category]</code>
+              Format: <code style={{ fontSize: 11 }}>1x Card Name (set) num</code>
             </p>
             <input
               ref={textFileInputRef}
@@ -519,8 +584,9 @@ export default function App() {
             {textImportProgress && <div className="loading-msg"><span className={textImporting ? 'spinner' : ''} />{textImportProgress}</div>}
           </div>
 
+          {/* ── Art ── */}
           <div className="sidebar-section">
-            <h2>Swap Art</h2>
+            <h2>Art</h2>
             {activeIndex === null ? (
               <p style={{ fontSize: 13, color: '#475569' }}>Load a card first</p>
             ) : (
@@ -555,8 +621,62 @@ export default function App() {
             )}
           </div>
 
+          {/* ── Set Symbol ── */}
           <div className="sidebar-section">
+            <h2>Set Symbol</h2>
+            {activeIndex === null ? (
+              <p style={{ fontSize: 13, color: '#475569' }}>Load a card first</p>
+            ) : (
+              <>
+                <input
+                  ref={symbolInputRef}
+                  type="file"
+                  accept="image/*,.svg"
+                  style={{ display: 'none' }}
+                  onChange={e => { applySetSymbol(e.target.files[0]); e.target.value = ''; }}
+                />
+                {activeCard?.setSymbolUrl ? (
+                  <div className="art-preview">
+                    <img src={activeCard.setSymbolUrl} alt="set symbol preview" style={{ background: '#1e293b', padding: 6, borderRadius: 4 }} />
+                    <div className="art-preview-actions">
+                      <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => symbolInputRef.current?.click()}>Replace</button>
+                      <button className="btn btn-danger" onClick={() => {
+                        setLoadedCards(prev => {
+                          const next = [...prev];
+                          next[activeIndex] = { ...next[activeIndex], setSymbolUrl: null };
+                          return next;
+                        });
+                      }}>Clear</button>
+                    </div>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ width: '100%', marginTop: 6 }}
+                      onClick={() => {
+                        const sym = activeCard.setSymbolUrl;
+                        setLoadedCards(prev => prev.map(c => ({ ...c, setSymbolUrl: sym })));
+                      }}
+                    >Apply to all cards</button>
+                  </div>
+                ) : (
+                  <button className="btn btn-secondary" style={{ width: '100%' }} onClick={() => symbolInputRef.current?.click()}>
+                    Upload symbol image
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* ── Card List ── */}
+          <div className="sidebar-section sidebar-section-row">
             <h2>Cards ({loadedCards.length})</h2>
+            {loadedCards.length > 0 && (
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => { setLoadedCards([]); setActiveIndex(null); }}
+              >
+                Remove All
+              </button>
+            )}
           </div>
           <div className="card-list">
             {loadedCards.length === 0 && (
@@ -569,7 +689,7 @@ export default function App() {
                 onClick={() => setActiveIndex(i)}
               >
                 <div className={`item-indicator ${c.artImageUrl ? 'has-art' : ''}`} />
-                <span className="item-name">{c.cardData.name}</span>
+                <span className="item-name">{c.customText?.name || c.cardData.name}</span>
                 <span className="item-color">{colorLabel(c.cardData.colors)}</span>
                 <button
                   className="btn btn-secondary"
@@ -583,43 +703,137 @@ export default function App() {
 
         <main className="main-area">
           {activeCard ? (
-            <div className="canvas-container">
-              {hasArt && (
-                <div className="transform-toolbar">
-                  <button className="btn btn-secondary" onClick={zoomOut}>−</button>
-                  <span className="zoom-label">{Math.round(curScale * 100)}%</span>
-                  <button className="btn btn-secondary" onClick={zoomIn}>+</button>
-                  <button className="btn btn-secondary" onClick={resetXfm}>Reset</button>
-                  <span className="hint-text">Drag · Scroll to zoom</span>
+            <div className="editor-layout">
+              {/* Canvas */}
+              <div className="canvas-section">
+                {hasArt && (
+                  <div className="transform-toolbar">
+                    <button className="btn btn-secondary" onClick={zoomOut}>−</button>
+                    <span className="zoom-label">{Math.round(curScale * 100)}%</span>
+                    <button className="btn btn-secondary" onClick={zoomIn}>+</button>
+                    <button className="btn btn-secondary" onClick={resetXfm}>Reset</button>
+                    <span className="hint-text">Drag · Scroll to zoom</span>
+                  </div>
+                )}
+                <canvas
+                  ref={canvasRef}
+                  style={{
+                    width: DISPLAY_W,
+                    height: DISPLAY_H,
+                    cursor: hasArt ? (isPanning ? 'grabbing' : 'grab') : 'default',
+                    userSelect: 'none',
+                  }}
+                  onMouseDown={onMouseDown}
+                  onMouseMove={onMouseMove}
+                  onMouseUp={onMouseUp}
+                  onMouseLeave={onMouseUp}
+                  onWheel={onWheel}
+                  onTouchStart={onTouchStart}
+                  onTouchMove={onTouchMove}
+                  onTouchEnd={onTouchEnd}
+                />
+              </div>
+
+              {/* Text fields panel */}
+              <div className="text-fields-panel">
+                <div className="fields-header">
+                  <h2 style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.8px', color: '#64748b', margin: 0 }}>
+                    Card Text
+                  </h2>
+                  <button className="btn btn-secondary btn-sm" onClick={resetCustomText} title="Reset to Scryfall data">
+                    Reset
+                  </button>
                 </div>
-              )}
-              <canvas
-                ref={canvasRef}
-                style={{
-                  width: DISPLAY_W,
-                  height: DISPLAY_H,
-                  cursor: hasArt ? (isPanning ? 'grabbing' : 'grab') : 'default',
-                  userSelect: 'none',
-                }}
-                onMouseDown={onMouseDown}
-                onMouseMove={onMouseMove}
-                onMouseUp={onMouseUp}
-                onMouseLeave={onMouseUp}
-                onWheel={onWheel}
-                onTouchStart={onTouchStart}
-                onTouchMove={onTouchMove}
-                onTouchEnd={onTouchEnd}
-              />
+
+                {activeCard.templateId ? (
+                  <div className="template-badge">
+                    Template: <strong>{activeCard.templateId}</strong>
+                  </div>
+                ) : (
+                  <div className="template-badge no-template">
+                    No template matched — showing Scryfall image
+                  </div>
+                )}
+
+                <div className="field-row-2">
+                  <div className="field-group">
+                    <label className="field-label">Name</label>
+                    <input
+                      className="field-input"
+                      value={ct?.name ?? ''}
+                      onChange={e => updateCustomText('name', e.target.value)}
+                      placeholder="Card name"
+                    />
+                  </div>
+                  <div className="field-group" style={{ width: 100, flexShrink: 0 }}>
+                    <label className="field-label">Mana Cost</label>
+                    <input
+                      className="field-input"
+                      value={ct?.manaCost ?? ''}
+                      onChange={e => updateCustomText('manaCost', e.target.value)}
+                      placeholder="{1}{R}"
+                    />
+                    {ct?.manaCost && (
+                      <div className="mana-preview">
+                        {parseManaTokens(ct.manaCost).map((tok, i) => (
+                          <i key={i} className={`ms ms-${manaTokenToClass(tok)} ms-cost ms-shadow`} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="field-group">
+                  <label className="field-label">Type Line</label>
+                  <input
+                    className="field-input"
+                    value={ct?.typeLine ?? ''}
+                    onChange={e => updateCustomText('typeLine', e.target.value)}
+                    placeholder="Instant"
+                  />
+                </div>
+
+                <div className="field-group">
+                  <label className="field-label">Oracle Text</label>
+                  <textarea
+                    className="field-input"
+                    rows={5}
+                    value={ct?.oracleText ?? ''}
+                    onChange={e => updateCustomText('oracleText', e.target.value)}
+                    placeholder="Rules text…"
+                  />
+                </div>
+
+                <div className="field-group">
+                  <label className="field-label">Flavour Text</label>
+                  <textarea
+                    className="field-input"
+                    rows={3}
+                    value={ct?.flavorText ?? ''}
+                    onChange={e => updateCustomText('flavorText', e.target.value)}
+                    placeholder="Italic flavour text…"
+                  />
+                </div>
+
+                <div className="field-group" style={{ width: 120 }}>
+                  <label className="field-label">P/T or Loyalty</label>
+                  <input
+                    className="field-input"
+                    value={ct?.pt ?? ''}
+                    onChange={e => updateCustomText('pt', e.target.value)}
+                    placeholder="3/3"
+                  />
+                </div>
+              </div>
             </div>
           ) : (
             <div className="no-card-placeholder">
               <div className="placeholder-icon">🃏</div>
-              <p>Search for a card on the left to get started.</p>
+              <p>Search for a card or import a deck to get started.</p>
             </div>
           )}
         </main>
       </div>
-
     </div>
   );
 }

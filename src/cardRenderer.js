@@ -1,10 +1,40 @@
-// Card renderer: composites user art into the art box on a real Scryfall card image.
-// Scryfall PNG: 745 × 1040px   Art box: x=57, y=119, w=630, h=465
+// Card renderer — composites template/Scryfall base + user art + text overlay
+// Card canvas: 745 × 1040px   Art box (transparent in template): x=30, y=124, w=685, h=427
+import { parseManaTokens, drawManaCost, drawKeyruneSymbol, rarityColor } from './manaSymbols.js';
 
 export const CARD_W = 745;
 export const CARD_H = 1040;
-export const ART_BOX = { x: 57, y: 119, w: 630, h: 465 };
+export const ART_BOX = { x: 30, y: 110, w: 685, h: 470 };
 export const BLEED = 36;
+
+// Text zone positions scaled from 1500×2100 template pixel analysis
+const TZ = {
+  name:    { x: 64,  y: 80  },
+  mana:    { x: 691, y: 78  },
+  type:    { x: 64,  y: 616 },
+  textBox: { x: 64,  y: 656, w: 620, h: 288 },
+  pt:      { x: 640, y: 958 },
+};
+
+const SET_SYMBOL = { cx: 660, cy: 616, size: 46 };
+
+let fontsReady = false;
+
+async function ensureFontsLoaded() {
+  if (fontsReady) return;
+  try {
+    const be   = new FontFace('Beleren2016-Bold', 'url(/mtg/fonts/Beleren2016-Bold.woff)');
+    const mp   = new FontFace('PlantinMTProRg',   'url(/mtg/fonts/Plantin%20MT%20Pro%20Regular.TTF)');
+    const mana = new FontFace('Mana',    'url(/mtg/fonts/mana.woff)');
+    const key  = new FontFace('Keyrune', 'url(/mtg/fonts/keyrune.woff)');
+    const loaded = await Promise.all([be.load(), mp.load(), mana.load(), key.load()]);
+    loaded.forEach(f => document.fonts.add(f));
+
+  } catch (e) {
+    console.warn('MTG fonts failed to load, falling back to system fonts', e);
+  }
+  fontsReady = true;
+}
 
 function loadImage(src) {
   return new Promise((resolve, reject) => {
@@ -23,33 +53,218 @@ function drawArtTransformed(ctx, img, bx, by, bw, bh, t) {
   ctx.drawImage(img, bx + bw / 2 - dw / 2 + t.x, by + bh / 2 - dh / 2 + t.y, dw, dh);
 }
 
-export async function renderCard(canvas, cardData, artImageUrl, artTransform = { x: 0, y: 0, scale: 1 }) {
+function belerenFont(size) {
+  return `${size}px 'Beleren2016-Bold', 'Palatino Linotype', serif`;
+}
+
+function mplantinFont(size, italic = false) {
+  return `${italic ? 'italic ' : ''}${size}px 'PlantinMTProRg', 'Palatino Linotype', Georgia, serif`;
+}
+
+function wrapText(ctx, text, x, y, maxW, lineH) {
+  let cy = y;
+  for (const para of text.split('\n')) {
+    if (!para.trim()) { cy += lineH * 0.5; continue; }
+    const words = para.split(' ');
+    let line = '';
+    for (const word of words) {
+      const test = line ? `${line} ${word}` : word;
+      if (ctx.measureText(test).width > maxW && line) {
+        ctx.fillText(line, x, cy);
+        cy += lineH;
+        line = word;
+      } else line = test;
+    }
+    if (line) { ctx.fillText(line, x, cy); cy += lineH; }
+  }
+  return cy;
+}
+
+function countLines(ctx, text, maxW) {
+  let n = 0;
+  for (const para of text.split('\n')) {
+    if (!para.trim()) { n += 0.5; continue; }
+    const words = para.split(' ');
+    let line = '';
+    for (const word of words) {
+      const test = line ? `${line} ${word}` : word;
+      if (ctx.measureText(test).width > maxW && line) { n++; line = word; }
+      else line = test;
+    }
+    if (line) n++;
+  }
+  return n;
+}
+
+function pickFontSize(ctx, oracle, flavor, maxW, maxH) {
+  for (let size = 30; size >= 10; size -= 0.5) {
+    const lh = size * 1.38;
+    ctx.font = mplantinFont(size);
+    const oLines = oracle ? countLines(ctx, oracle, maxW) : 0;
+    ctx.font = mplantinFont(Math.max(size - 1, 10), true);
+    const fLines = flavor ? countLines(ctx, flavor, maxW) : 0;
+    const sep = oracle && flavor ? lh * 0.6 : 0;
+    if ((oLines + fLines) * lh + sep <= maxH) return size;
+  }
+  return 10;
+}
+
+export function renderTextOverlay(ctx, customText) {
+  const { name, manaCost, typeLine, oracleText, flavorText, pt } = customText;
+
+  ctx.save();
+
+  if (name) {
+    ctx.font = belerenFont(40);
+    ctx.fillStyle = '#000';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(name, TZ.name.x, TZ.name.y);
+  }
+
+  if (manaCost) {
+    const tokens = parseManaTokens(manaCost);
+    drawManaCost(ctx, tokens, TZ.mana.x, TZ.mana.y, 40);
+  }
+
+  if (typeLine) {
+    ctx.font = belerenFont(32);
+    ctx.fillStyle = '#000';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(typeLine, TZ.type.x, TZ.type.y);
+  }
+
+  const { x, y, w, h } = TZ.textBox;
+  const size = pickFontSize(ctx, oracleText || '', flavorText || '', w, h);
+  const lh = size * 1.38;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  let cy = y + size;
+
+  if (oracleText) {
+    ctx.font = mplantinFont(size);
+    ctx.fillStyle = '#000';
+    cy = wrapText(ctx, oracleText, x, cy, w, lh);
+  }
+
+  if (flavorText) {
+    if (oracleText) {
+      cy += lh * 0.3;
+      ctx.save();
+      ctx.strokeStyle = '#888';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(x + w * 0.25, cy - size * 0.35);
+      ctx.lineTo(x + w * 0.75, cy - size * 0.35);
+      ctx.stroke();
+      ctx.restore();
+      cy += lh * 0.3;
+    }
+    const fSize = Math.max(size - 1, 10);
+    ctx.font = mplantinFont(fSize, true);
+    ctx.fillStyle = '#222';
+    wrapText(ctx, flavorText, x, cy, w, fSize * 1.38);
+  }
+
+  if (pt) {
+    ctx.font = belerenFont(40);
+    ctx.fillStyle = '#000';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(pt, TZ.pt.x, TZ.pt.y);
+  }
+
+  ctx.restore();
+}
+
+export async function renderCard(
+  canvas,
+  cardData,
+  artImageUrl,
+  artTransform = { x: 0, y: 0, scale: 1 },
+  setSymbolUrl = null,
+  customText = null,
+  templateUrl = null,
+) {
+  await ensureFontsLoaded();
+
   canvas.width  = CARD_W;
   canvas.height = CARD_H;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, CARD_W, CARD_H);
 
-  const scryfallUrl = cardData.image_uris?.png || cardData.image_uris?.large;
+  const scryfallUrl = cardData?.image_uris?.png || cardData?.image_uris?.large;
+  const baseUrl = templateUrl || scryfallUrl;
 
-  const [baseImg, artImg] = await Promise.all([
-    scryfallUrl ? loadImage(scryfallUrl).catch(() => null) : Promise.resolve(null),
-    artImageUrl ? loadImage(artImageUrl).catch(() => null)  : Promise.resolve(null),
+  const [baseImg, artImg, symbolImg] = await Promise.all([
+    baseUrl     ? loadImage(baseUrl).catch(() => null)     : Promise.resolve(null),
+    artImageUrl ? loadImage(artImageUrl).catch(() => null) : Promise.resolve(null),
+    setSymbolUrl ? loadImage(setSymbolUrl).catch(() => null) : Promise.resolve(null),
   ]);
 
-  if (baseImg) ctx.drawImage(baseImg, 0, 0, CARD_W, CARD_H);
-  else { ctx.fillStyle = '#333'; ctx.fillRect(0, 0, CARD_W, CARD_H); }
+  if (!baseImg) {
+    ctx.fillStyle = '#333';
+    ctx.fillRect(0, 0, CARD_W, CARD_H);
+  }
 
-  if (artImg) {
+  if (templateUrl) {
+    // Art first so the template frame (transparent art box) composites on top
+    if (artImg) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(ART_BOX.x, ART_BOX.y, ART_BOX.w, ART_BOX.h);
+      ctx.clip();
+      drawArtTransformed(ctx, artImg, ART_BOX.x, ART_BOX.y, ART_BOX.w, ART_BOX.h, artTransform);
+      ctx.restore();
+    }
+    if (baseImg) ctx.drawImage(baseImg, 0, 0, CARD_W, CARD_H);
+  } else {
+    if (baseImg) ctx.drawImage(baseImg, 0, 0, CARD_W, CARD_H);
+    if (artImg) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(ART_BOX.x, ART_BOX.y, ART_BOX.w, ART_BOX.h);
+      ctx.clip();
+      drawArtTransformed(ctx, artImg, ART_BOX.x, ART_BOX.y, ART_BOX.w, ART_BOX.h, artTransform);
+      ctx.restore();
+    }
+  }
+
+  if (symbolImg) {
+    // User-uploaded image takes priority
+    const s = SET_SYMBOL.size;
+    const sx = SET_SYMBOL.cx - s / 2;
+    const sy = SET_SYMBOL.cy - s / 2;
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(ART_BOX.x, ART_BOX.y, ART_BOX.w, ART_BOX.h);
-    ctx.clip();
-    drawArtTransformed(ctx, artImg, ART_BOX.x, ART_BOX.y, ART_BOX.w, ART_BOX.h, artTransform);
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.drawImage(symbolImg, sx, sy, s, s);
     ctx.restore();
+  } else if (templateUrl && cardData?.set) {
+    // Auto keyrune symbol from card's set code
+    drawKeyruneSymbol(
+      ctx,
+      cardData.set,
+      SET_SYMBOL.cx, SET_SYMBOL.cy,
+      SET_SYMBOL.size,
+      rarityColor(cardData.rarity),
+    );
+  }
+
+  if (customText && templateUrl) {
+    renderTextOverlay(ctx, customText);
   }
 }
 
-export async function renderCardWithBleed(canvas, cardData, artImageUrl, artTransform) {
+export async function renderCardWithBleed(
+  canvas,
+  cardData,
+  artImageUrl,
+  artTransform,
+  setSymbolUrl = null,
+  customText = null,
+  templateUrl = null,
+) {
   const totalW = CARD_W + BLEED * 2;
   const totalH = CARD_H + BLEED * 2;
   canvas.width  = totalW;
@@ -60,7 +275,7 @@ export async function renderCardWithBleed(canvas, cardData, artImageUrl, artTran
   ctx.fillRect(0, 0, totalW, totalH);
 
   const tmp = document.createElement('canvas');
-  await renderCard(tmp, cardData, artImageUrl, artTransform);
+  await renderCard(tmp, cardData, artImageUrl, artTransform, setSymbolUrl, customText, templateUrl);
   ctx.drawImage(tmp, BLEED, BLEED);
 
   ctx.strokeStyle = '#000';
