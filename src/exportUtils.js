@@ -1,18 +1,21 @@
 import JSZip from 'jszip';
 import { renderCard, renderCardWithBleed, CARD_W, CARD_H, BLEED } from './cardRenderer.js';
+import { getTemplateUrl } from './templates.js';
 
-export async function exportSingleCard(cardData, artImageUrl, artTransform, withBleed = false) {
+export async function exportSingleCard(card, withBleed = false) {
+  const { cardData, artImageUrl, artTransform, setSymbolUrl, customText, templateId } = card;
+  const templateUrl = getTemplateUrl(templateId);
   const canvas = document.createElement('canvas');
   if (withBleed) {
-    await renderCardWithBleed(canvas, cardData, artImageUrl, artTransform);
+    await renderCardWithBleed(canvas, cardData, artImageUrl, artTransform, setSymbolUrl ?? null, customText ?? null, templateUrl);
   } else {
-    await renderCard(canvas, cardData, artImageUrl, artTransform);
+    await renderCard(canvas, cardData, artImageUrl, artTransform, setSymbolUrl ?? null, customText ?? null, templateUrl);
   }
   const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${cardData.name.replace(/[^a-zA-Z0-9]/g, '_')}.png`;
+  a.download = `${(customText?.name || cardData.name).replace(/[^a-zA-Z0-9]/g, '_')}.png`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -41,8 +44,9 @@ export async function exportPrintSheet(cards, onProgress) {
       const row = Math.floor(i / cols);
       const x = PAGE_MARGIN + col * (cardWithBleed + 10);
       const y = PAGE_MARGIN + row * (cardHeightBleed + 10);
+      const c = pageCards[i];
       const tmp = document.createElement('canvas');
-      await renderCardWithBleed(tmp, pageCards[i].cardData, pageCards[i].artImageUrl, pageCards[i].artTransform);
+      await renderCardWithBleed(tmp, c.cardData, c.artImageUrl, c.artTransform, c.setSymbolUrl ?? null, c.customText ?? null, getTemplateUrl(c.templateId));
       ctx.drawImage(tmp, x, y);
       if (onProgress) onProgress(p * perPage + i + 1, cards.length);
     }
@@ -61,11 +65,11 @@ export async function exportPrintSheet(cards, onProgress) {
 export async function exportAllDigital(cards, onProgress) {
   const zip = new JSZip();
   for (let i = 0; i < cards.length; i++) {
-    const { cardData, artImageUrl, artTransform } = cards[i];
+    const c = cards[i];
     const canvas = document.createElement('canvas');
-    await renderCard(canvas, cardData, artImageUrl, artTransform);
+    await renderCard(canvas, c.cardData, c.artImageUrl, c.artTransform, c.setSymbolUrl ?? null, c.customText ?? null, getTemplateUrl(c.templateId));
     const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
-    const filename = `${cardData.name.replace(/[^a-zA-Z0-9]/g, '_')}.png`;
+    const filename = `${(c.customText?.name || c.cardData.name).replace(/[^a-zA-Z0-9]/g, '_')}.png`;
     zip.file(filename, blob);
     if (onProgress) onProgress(i + 1, cards.length);
   }
