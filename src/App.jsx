@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import 'mana-font/css/mana.css';
 import 'keyrune/css/keyrune.css';
-import { renderCard, CARD_W, CARD_H } from './cardRenderer.js';
+import { renderCard, CARD_W, CARD_H, ART_BOX } from './cardRenderer.js';
 import { exportSingleCard, exportPrintSheet, exportAllDigital } from './exportUtils.js';
 import { getTemplateUrl, getTemplateKey } from './templates.js';
 import { parseManaTokens, manaTokenToClass } from './manaSymbols.js';
@@ -34,7 +34,6 @@ function parseArchidektId(input) {
   if (/^\d+$/.test(input.trim())) return input.trim();
   return null;
 }
-
 
 function initCustomText(card) {
   return {
@@ -72,7 +71,6 @@ export default function App() {
         const ct = c.customText ?? {};
         return {
           ...c,
-          // Merge saved values with defaults — ?? ensures undefined saved fields fall back
           customText: {
             name:       ct.name       ?? defaults.name,
             manaCost:   ct.manaCost   ?? defaults.manaCost,
@@ -81,7 +79,6 @@ export default function App() {
             flavorText: ct.flavorText ?? defaults.flavorText,
             pt:         ct.pt         ?? defaults.pt,
           },
-          // recompute if old data has a random id that's not a TEMPLATE_MAP key
           templateId: getTemplateKey(c.cardData),
         };
       });
@@ -428,9 +425,9 @@ export default function App() {
     updateTransform(t => ({ ...t, scale: Math.max(0.5, Math.min(4, t.scale - e.deltaY * 0.001)) }));
   };
 
-  const zoomIn   = () => updateTransform(t => ({ ...t, scale: Math.min(4, t.scale + 0.1) }));
-  const zoomOut  = () => updateTransform(t => ({ ...t, scale: Math.max(0.5, t.scale - 0.1) }));
-  const resetXfm = () => updateTransform(() => DEFAULT_TRANSFORM());
+  const zoomIn  = () => updateTransform(t => ({ ...t, scale: Math.min(4, +(t.scale + 0.1).toFixed(2)) }));
+  const zoomOut = () => updateTransform(t => ({ ...t, scale: Math.max(0.5, +(t.scale - 0.1).toFixed(2)) }));
+
 
   // ── Art drop zone ───────────────────────────────────────────────────────────
   const handleDropZoneClick = () => fileInputRef.current?.click();
@@ -473,11 +470,6 @@ export default function App() {
     }
   };
 
-  const colorLabel = (colors) => {
-    if (!colors || colors.length === 0) return 'C';
-    if (colors.length > 1) return 'M';
-    return colors[0];
-  };
 
   const hasArt   = !!activeCard?.artImageUrl;
   const curScale = activeCard?.artTransform?.scale ?? 1;
@@ -520,9 +512,10 @@ export default function App() {
       </header>
 
       <div className="app-body">
+
+        {/* ── Left Sidebar: deck navigation ── */}
         <aside className="sidebar">
 
-          {/* ── Add Card ── */}
           <div className="sidebar-section">
             <h2>Add Card</h2>
             <div className="search-row">
@@ -540,7 +533,6 @@ export default function App() {
             {error && <div className="error-msg">{error}</div>}
           </div>
 
-          {/* ── Import from Archidekt ── */}
           <div className="sidebar-section">
             <h2>Import from Archidekt</h2>
             <div className="search-row">
@@ -559,7 +551,6 @@ export default function App() {
             {importProgress && <div className="loading-msg"><span className={importing ? 'spinner' : ''} />{importProgress}</div>}
           </div>
 
-          {/* ── Import from Text File ── */}
           <div className="sidebar-section">
             <h2>Import from Text File</h2>
             <p style={{ fontSize: 13, color: '#475569', marginBottom: 8 }}>
@@ -584,25 +575,115 @@ export default function App() {
             {textImportProgress && <div className="loading-msg"><span className={textImporting ? 'spinner' : ''} />{textImportProgress}</div>}
           </div>
 
-          {/* ── Art ── */}
-          <div className="sidebar-section">
-            <h2>Art</h2>
-            {activeIndex === null ? (
-              <p style={{ fontSize: 13, color: '#475569' }}>Load a card first</p>
-            ) : (
-              <>
-                <div
-                  className={`drop-zone ${dragging ? 'dragging' : ''}`}
-                  onClick={handleDropZoneClick}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                >
-                  <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} />
-                  <div className="drop-icon">🖼</div>
-                  <div>{hasArt ? 'Drop to replace art' : 'Click or drag image here'}</div>
-                </div>
+          <div className="sidebar-section sidebar-section-row">
+            <h2>Cards ({loadedCards.length})</h2>
+            {loadedCards.length > 0 && (
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => { setLoadedCards([]); setActiveIndex(null); }}
+              >
+                Remove All
+              </button>
+            )}
+          </div>
+          <div className="card-list">
+            {loadedCards.length === 0 && (
+              <div className="empty-list">No cards yet.<br />Search above to add one.</div>
+            )}
+            {loadedCards.map((c, i) => (
+              <div
+                key={c.cardData.id + i}
+                className={`card-list-item ${i === activeIndex ? 'active' : ''}`}
+                onClick={() => setActiveIndex(i)}
+              >
+                <div className={`item-indicator ${c.artImageUrl ? 'has-art' : ''}`} />
+                <span className="item-name">{c.customText?.name || c.cardData.name}</span>
+                <span className="item-color">
+                  {!c.cardData.colors || c.cardData.colors.length === 0
+                    ? <i className="ms ms-c ms-cost ms-shadow" />
+                    : c.cardData.colors.map(col => <i key={col} className={`ms ms-${col.toLowerCase()} ms-cost ms-shadow`} />)
+                  }
+                </span>
+                <button
+                  className="btn btn-secondary"
+                  style={{ padding: '2px 8px', fontSize: 11 }}
+                  onClick={e => { e.stopPropagation(); removeCard(i); }}
+                >✕</button>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        {/* ── Canvas ── */}
+        <main className="main-area">
+          {activeCard ? (
+            <div className="canvas-section">
+              <div
+                className="canvas-wrapper"
+                style={{ cursor: hasArt ? (isPanning ? 'grabbing' : 'grab') : 'default' }}
+                onMouseLeave={onMouseUp}
+              >
+                <canvas
+                  ref={canvasRef}
+                  style={{ width: DISPLAY_W, height: DISPLAY_H, userSelect: 'none', display: 'block' }}
+                  onMouseDown={onMouseDown}
+                  onMouseMove={onMouseMove}
+                  onMouseUp={onMouseUp}
+                  onWheel={onWheel}
+                  onTouchStart={onTouchStart}
+                  onTouchMove={onTouchMove}
+                  onTouchEnd={onTouchEnd}
+                />
                 {hasArt && (
+                  <div
+                    className="canvas-grid-overlay"
+                    style={{
+                      left:   `${(ART_BOX.x / CARD_W) * 100}%`,
+                      top:    `${(ART_BOX.y / CARD_H) * 100}%`,
+                      width:  `${(ART_BOX.w / CARD_W) * 100}%`,
+                      height: `${(ART_BOX.h / CARD_H) * 100}%`,
+                    }}
+                  >
+                    <div className="grid-rule-h" style={{ top: '33.33%' }} />
+                    <div className="grid-rule-h" style={{ top: '66.66%' }} />
+                    <div className="grid-rule-v" style={{ left: '33.33%' }} />
+                    <div className="grid-rule-v" style={{ left: '66.66%' }} />
+                    <div className="canvas-zoom-controls">
+                      <button className="canvas-zoom-btn" onMouseDown={e => e.stopPropagation()} onClick={zoomOut}>−</button>
+                      <span className="canvas-zoom-label">{Math.round(curScale * 100)}%</span>
+                      <button className="canvas-zoom-btn" onMouseDown={e => e.stopPropagation()} onClick={zoomIn}>+</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="no-card-placeholder">
+              <div className="placeholder-icon">🃏</div>
+              <p>Search for a card or import a deck to get started.</p>
+            </div>
+          )}
+        </main>
+
+        {/* ── Right Sidebar: card details ── */}
+        <aside className="right-sidebar">
+          {activeCard ? (
+            <>
+              {/* Card header */}
+              <div className="sidebar-section right-sidebar-header">
+                <div className="right-sidebar-title">
+                  <span className="right-sidebar-card-name">{ct?.name || activeCard.cardData.name}</span>
+                  <button className="btn btn-secondary btn-sm" onClick={resetCustomText} title="Reset to Scryfall data">
+                    Reset
+                  </button>
+                </div>
+              </div>
+
+              {/* Art */}
+              <div className="sidebar-section">
+                <h2>Art</h2>
+                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} />
+                {hasArt ? (
                   <div className="art-preview">
                     <img src={activeCard.artImageUrl} alt="art preview" />
                     <div className="art-preview-actions">
@@ -616,18 +697,23 @@ export default function App() {
                       }}>Clear</button>
                     </div>
                   </div>
+                ) : (
+                  <div
+                    className={`drop-zone ${dragging ? 'dragging' : ''}`}
+                    onClick={handleDropZoneClick}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                  >
+                    <div className="drop-icon">🖼</div>
+                    <div>Click or drag image here</div>
+                  </div>
                 )}
-              </>
-            )}
-          </div>
+              </div>
 
-          {/* ── Set Symbol ── */}
-          <div className="sidebar-section">
-            <h2>Set Symbol</h2>
-            {activeIndex === null ? (
-              <p style={{ fontSize: 13, color: '#475569' }}>Load a card first</p>
-            ) : (
-              <>
+              {/* Set Symbol */}
+              <div className="sidebar-section">
+                <h2>Set Symbol</h2>
                 <input
                   ref={symbolInputRef}
                   type="file"
@@ -662,100 +748,12 @@ export default function App() {
                     Upload symbol image
                   </button>
                 )}
-              </>
-            )}
-          </div>
-
-          {/* ── Card List ── */}
-          <div className="sidebar-section sidebar-section-row">
-            <h2>Cards ({loadedCards.length})</h2>
-            {loadedCards.length > 0 && (
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={() => { setLoadedCards([]); setActiveIndex(null); }}
-              >
-                Remove All
-              </button>
-            )}
-          </div>
-          <div className="card-list">
-            {loadedCards.length === 0 && (
-              <div className="empty-list">No cards yet.<br />Search above to add one.</div>
-            )}
-            {loadedCards.map((c, i) => (
-              <div
-                key={c.cardData.id + i}
-                className={`card-list-item ${i === activeIndex ? 'active' : ''}`}
-                onClick={() => setActiveIndex(i)}
-              >
-                <div className={`item-indicator ${c.artImageUrl ? 'has-art' : ''}`} />
-                <span className="item-name">{c.customText?.name || c.cardData.name}</span>
-                <span className="item-color">{colorLabel(c.cardData.colors)}</span>
-                <button
-                  className="btn btn-secondary"
-                  style={{ padding: '2px 8px', fontSize: 11 }}
-                  onClick={e => { e.stopPropagation(); removeCard(i); }}
-                >✕</button>
-              </div>
-            ))}
-          </div>
-        </aside>
-
-        <main className="main-area">
-          {activeCard ? (
-            <div className="editor-layout">
-              {/* Canvas */}
-              <div className="canvas-section">
-                {hasArt && (
-                  <div className="transform-toolbar">
-                    <button className="btn btn-secondary" onClick={zoomOut}>−</button>
-                    <span className="zoom-label">{Math.round(curScale * 100)}%</span>
-                    <button className="btn btn-secondary" onClick={zoomIn}>+</button>
-                    <button className="btn btn-secondary" onClick={resetXfm}>Reset</button>
-                    <span className="hint-text">Drag · Scroll to zoom</span>
-                  </div>
-                )}
-                <canvas
-                  ref={canvasRef}
-                  style={{
-                    width: DISPLAY_W,
-                    height: DISPLAY_H,
-                    cursor: hasArt ? (isPanning ? 'grabbing' : 'grab') : 'default',
-                    userSelect: 'none',
-                  }}
-                  onMouseDown={onMouseDown}
-                  onMouseMove={onMouseMove}
-                  onMouseUp={onMouseUp}
-                  onMouseLeave={onMouseUp}
-                  onWheel={onWheel}
-                  onTouchStart={onTouchStart}
-                  onTouchMove={onTouchMove}
-                  onTouchEnd={onTouchEnd}
-                />
               </div>
 
-              {/* Text fields panel */}
-              <div className="text-fields-panel">
-                <div className="fields-header">
-                  <h2 style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.8px', color: '#64748b', margin: 0 }}>
-                    Card Text
-                  </h2>
-                  <button className="btn btn-secondary btn-sm" onClick={resetCustomText} title="Reset to Scryfall data">
-                    Reset
-                  </button>
-                </div>
-
-                {activeCard.templateId ? (
-                  <div className="template-badge">
-                    Template: <strong>{activeCard.templateId}</strong>
-                  </div>
-                ) : (
-                  <div className="template-badge no-template">
-                    No template matched — showing Scryfall image
-                  </div>
-                )}
-
-                <div className="field-row-2">
+              {/* Card Text */}
+              <div className="sidebar-section">
+                <h2>Card Text</h2>
+                <div className="card-text-fields">
                   <div className="field-group">
                     <label className="field-label">Name</label>
                     <input
@@ -765,7 +763,8 @@ export default function App() {
                       placeholder="Card name"
                     />
                   </div>
-                  <div className="field-group" style={{ width: 100, flexShrink: 0 }}>
+
+                  <div className="field-group">
                     <label className="field-label">Mana Cost</label>
                     <input
                       className="field-input"
@@ -781,58 +780,59 @@ export default function App() {
                       </div>
                     )}
                   </div>
-                </div>
 
-                <div className="field-group">
-                  <label className="field-label">Type Line</label>
-                  <input
-                    className="field-input"
-                    value={ct?.typeLine ?? ''}
-                    onChange={e => updateCustomText('typeLine', e.target.value)}
-                    placeholder="Instant"
-                  />
-                </div>
+                  <div className="field-group">
+                    <label className="field-label">Type Line</label>
+                    <input
+                      className="field-input"
+                      value={ct?.typeLine ?? ''}
+                      onChange={e => updateCustomText('typeLine', e.target.value)}
+                      placeholder="Instant"
+                    />
+                  </div>
 
-                <div className="field-group">
-                  <label className="field-label">Oracle Text</label>
-                  <textarea
-                    className="field-input"
-                    rows={5}
-                    value={ct?.oracleText ?? ''}
-                    onChange={e => updateCustomText('oracleText', e.target.value)}
-                    placeholder="Rules text…"
-                  />
-                </div>
+                  <div className="field-group">
+                    <label className="field-label">Oracle Text</label>
+                    <textarea
+                      className="field-input"
+                      rows={5}
+                      value={ct?.oracleText ?? ''}
+                      onChange={e => updateCustomText('oracleText', e.target.value)}
+                      placeholder="Rules text…"
+                    />
+                  </div>
 
-                <div className="field-group">
-                  <label className="field-label">Flavour Text</label>
-                  <textarea
-                    className="field-input"
-                    rows={3}
-                    value={ct?.flavorText ?? ''}
-                    onChange={e => updateCustomText('flavorText', e.target.value)}
-                    placeholder="Italic flavour text…"
-                  />
-                </div>
+                  <div className="field-group">
+                    <label className="field-label">Flavour Text</label>
+                    <textarea
+                      className="field-input"
+                      rows={3}
+                      value={ct?.flavorText ?? ''}
+                      onChange={e => updateCustomText('flavorText', e.target.value)}
+                      placeholder="Italic flavour text…"
+                    />
+                  </div>
 
-                <div className="field-group" style={{ width: 120 }}>
-                  <label className="field-label">P/T or Loyalty</label>
-                  <input
-                    className="field-input"
-                    value={ct?.pt ?? ''}
-                    onChange={e => updateCustomText('pt', e.target.value)}
-                    placeholder="3/3"
-                  />
+                  <div className="field-group">
+                    <label className="field-label">P/T or Loyalty</label>
+                    <input
+                      className="field-input"
+                      value={ct?.pt ?? ''}
+                      onChange={e => updateCustomText('pt', e.target.value)}
+                      placeholder="3/3"
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
+            </>
           ) : (
-            <div className="no-card-placeholder">
-              <div className="placeholder-icon">🃏</div>
-              <p>Search for a card or import a deck to get started.</p>
+            <div className="right-sidebar-empty">
+              <div style={{ fontSize: 32, opacity: 0.2, marginBottom: 10 }}>☰</div>
+              <p>Select a card to edit its details</p>
             </div>
           )}
-        </main>
+        </aside>
+
       </div>
     </div>
   );

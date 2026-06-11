@@ -511,8 +511,8 @@ export function rarityColor(rarity) {
 
 // Background colors for each mana token (matches mana-font CSS)
 const MANA_BG = {
-  'W': '#F9FAF4', 'U': '#0E68AB', 'B': '#150B00',
-  'R': '#D3202A', 'G': '#00733E', 'C': '#AAA9A9',
+  'W': '#F0E3B8', 'U': '#B5CAE6', 'B': '#A19C9A',
+  'R': '#DEA285', 'G': '#BFD5BF', 'C': '#AAA9A9',
   'S': '#C9D8E2', 'P': '#2C0D44', 'T': '#7B7B7B',
   'Q': '#7B7B7B', 'E': '#7B7B7B',
 };

@@ -4,7 +4,7 @@ import { parseManaTokens, drawManaCost, drawKeyruneSymbol, rarityColor } from '.
 
 export const CARD_W = 745;
 export const CARD_H = 1040;
-export const ART_BOX = { x: 30, y: 110, w: 685, h: 470 };
+export const ART_BOX = { x: 56, y: 118, w: 634, h: 460 };
 export const BLEED = 36;
 
 // Text zone positions scaled from 1500×2100 template pixel analysis
@@ -12,7 +12,7 @@ const TZ = {
   name:    { x: 64,  y: 80  },
   mana:    { x: 691, y: 78  },
   type:    { x: 64,  y: 616 },
-  textBox: { x: 64,  y: 656, w: 620, h: 288 },
+  textBox: { x: 64,  y: 656, w: 610, h: 288 },
   pt:      { x: 640, y: 958 },
 };
 
@@ -55,6 +55,16 @@ function drawArtTransformed(ctx, img, bx, by, bw, bh, t) {
 
 function belerenFont(size) {
   return `${size}px 'Beleren2016-Bold', 'Palatino Linotype', serif`;
+}
+
+function fitTextSize(ctx, text, fontFn, defaultSize, minSize, maxWidth) {
+  ctx.font = fontFn(defaultSize);
+  if (ctx.measureText(text).width <= maxWidth) return defaultSize;
+  for (let size = defaultSize - 0.5; size >= minSize; size -= 0.5) {
+    ctx.font = fontFn(size);
+    if (ctx.measureText(text).width <= maxWidth) return size;
+  }
+  return minSize;
 }
 
 function mplantinFont(size, italic = false) {
@@ -103,7 +113,7 @@ function pickFontSize(ctx, oracle, flavor, maxW, maxH) {
     const oLines = oracle ? countLines(ctx, oracle, maxW) : 0;
     ctx.font = mplantinFont(Math.max(size - 1, 10), true);
     const fLines = flavor ? countLines(ctx, flavor, maxW) : 0;
-    const sep = oracle && flavor ? lh * 0.6 : 0;
+    const sep = oracle && flavor ? lh * 1.05 : 0;
     if ((oLines + fLines) * lh + sep <= maxH) return size;
   }
   return 10;
@@ -115,7 +125,15 @@ export function renderTextOverlay(ctx, customText) {
   ctx.save();
 
   if (name) {
-    ctx.font = belerenFont(40);
+    const MANA_SYMBOL_SIZE = 40;
+    const MANA_GAP = 4;
+    const manaTokens = manaCost ? parseManaTokens(manaCost) : [];
+    const manaWidth = manaTokens.length > 0
+      ? manaTokens.length * (MANA_SYMBOL_SIZE + MANA_GAP) - MANA_GAP
+      : 0;
+    const nameMaxW = (TZ.mana.x - manaWidth) - TZ.name.x - 16;
+    const nameSize = fitTextSize(ctx, name, belerenFont, 40, 20, nameMaxW);
+    ctx.font = belerenFont(nameSize);
     ctx.fillStyle = '#000';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
@@ -128,7 +146,10 @@ export function renderTextOverlay(ctx, customText) {
   }
 
   if (typeLine) {
-    ctx.font = belerenFont(32);
+    // Stop before the set symbol
+    const typeMaxW = SET_SYMBOL.cx - SET_SYMBOL.size / 2 - TZ.type.x - 16;
+    const typeSize = fitTextSize(ctx, typeLine, belerenFont, 32, 16, typeMaxW);
+    ctx.font = belerenFont(typeSize);
     ctx.fillStyle = '#000';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
@@ -150,7 +171,7 @@ export function renderTextOverlay(ctx, customText) {
 
   if (flavorText) {
     if (oracleText) {
-      cy += lh * 0.3;
+      cy += lh * 0.05;
       ctx.save();
       ctx.strokeStyle = '#888';
       ctx.lineWidth = 0.5;
@@ -159,7 +180,7 @@ export function renderTextOverlay(ctx, customText) {
       ctx.lineTo(x + w * 0.75, cy - size * 0.35);
       ctx.stroke();
       ctx.restore();
-      cy += lh * 0.3;
+      cy += lh * 1.0;
     }
     const fSize = Math.max(size - 1, 10);
     ctx.font = mplantinFont(fSize, true);
@@ -186,6 +207,7 @@ export async function renderCard(
   setSymbolUrl = null,
   customText = null,
   templateUrl = null,
+  artOpacity = 1,
 ) {
   await ensureFontsLoaded();
 
@@ -215,6 +237,7 @@ export async function renderCard(
       ctx.beginPath();
       ctx.rect(ART_BOX.x, ART_BOX.y, ART_BOX.w, ART_BOX.h);
       ctx.clip();
+      ctx.globalAlpha = artOpacity;
       drawArtTransformed(ctx, artImg, ART_BOX.x, ART_BOX.y, ART_BOX.w, ART_BOX.h, artTransform);
       ctx.restore();
     }
@@ -226,6 +249,7 @@ export async function renderCard(
       ctx.beginPath();
       ctx.rect(ART_BOX.x, ART_BOX.y, ART_BOX.w, ART_BOX.h);
       ctx.clip();
+      ctx.globalAlpha = artOpacity;
       drawArtTransformed(ctx, artImg, ART_BOX.x, ART_BOX.y, ART_BOX.w, ART_BOX.h, artTransform);
       ctx.restore();
     }
